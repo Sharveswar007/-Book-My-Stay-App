@@ -1,3 +1,6 @@
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * BookMyStayApp - Hotel Booking Management System.
  *
@@ -5,21 +8,18 @@
  * UC1: Application Entry and Welcome Message
  * <p>
  * UC2: Basic Room Types and Static Availability
+ * <p>
+ * UC3: Centralized Room Inventory Management (HashMap)
  *
  * @author Sharveswar
- * @version 2.0
+ * @version 3.0
  */
 public class BookMyStayApp {
 
     // =========================================================================
-    // UC2 — Room Domain Model (Abstract Class + Inheritance + Polymorphism)
+    // UC2 — Room Domain Model
     // =========================================================================
 
-    /**
-     * Abstract base class for all hotel room types.
-     * Encapsulates shared attributes and enforces structure
-     * via the abstract {@code displayAmenities()} method.
-     */
     static abstract class Room {
         protected String roomType;
         protected int numberOfBeds;
@@ -40,22 +40,20 @@ public class BookMyStayApp {
             return roomType;
         }
 
-        public int getNumberOfBeds() {
-            return numberOfBeds;
-        }
-
         public double getPricePerNight() {
             return pricePerNight;
+        }
+
+        public int getNumberOfBeds() {
+            return numberOfBeds;
         }
 
         public String getSizeDescription() {
             return sizeDescription;
         }
 
-        /** Displays amenities specific to this room type. */
         public abstract void displayAmenities();
 
-        /** Prints a formatted summary of this room's core details. */
         public void displayRoomDetails() {
             System.out.println("  Room Type   : " + roomType);
             System.out.println("  Beds        : " + numberOfBeds);
@@ -65,11 +63,9 @@ public class BookMyStayApp {
         }
     }
 
-    /** Single Room — compact, budget-friendly option (1 bed). */
     static class SingleRoom extends Room {
         public SingleRoom() {
-            super("Single Room", 1, 80.00, "Small (200 sq ft)",
-                    "Wi-Fi, TV, Mini-Fridge");
+            super("Single Room", 1, 80.00, "Small (200 sq ft)", "Wi-Fi, TV, Mini-Fridge");
         }
 
         @Override
@@ -78,11 +74,9 @@ public class BookMyStayApp {
         }
     }
 
-    /** Double Room — suitable for couples or small families (2 beds). */
     static class DoubleRoom extends Room {
         public DoubleRoom() {
-            super("Double Room", 2, 140.00, "Medium (350 sq ft)",
-                    "Wi-Fi, TV, Mini-Fridge, Work Desk");
+            super("Double Room", 2, 140.00, "Medium (350 sq ft)", "Wi-Fi, TV, Mini-Fridge, Work Desk");
         }
 
         @Override
@@ -91,11 +85,9 @@ public class BookMyStayApp {
         }
     }
 
-    /** Suite Room — premium, spacious accommodation (3 beds). */
     static class SuiteRoom extends Room {
         public SuiteRoom() {
-            super("Suite Room", 3, 280.00, "Large (600 sq ft)",
-                    "Wi-Fi, TV, Mini-Bar, Jacuzzi, Living Area, Balcony");
+            super("Suite Room", 3, 280.00, "Large (600 sq ft)", "Wi-Fi, TV, Mini-Bar, Jacuzzi, Living Area, Balcony");
         }
 
         @Override
@@ -105,43 +97,87 @@ public class BookMyStayApp {
     }
 
     // =========================================================================
-    // UC1 — Application Entry Point (main)
+    // UC3 — Centralized Room Inventory (HashMap)
     // =========================================================================
 
     /**
-     * Application entry point.
-     * UC1: Prints welcome message.
-     * UC2: Creates room objects and displays catalog with static availability.
+     * RoomInventory — single source of truth for room availability.
      *
-     * @param args command-line arguments (not used)
+     * <p>
+     * Replaces UC2's scattered availability variables with a
+     * centralized {@code HashMap<String, Integer>} providing O(1)
+     * access and controlled, consistent updates.
      */
-    public static void main(String[] args) {
+    static class RoomInventory {
+        private final HashMap<String, Integer> inventory;
 
-        // UC1: Welcome message
-        System.out.println("============================================");
-        System.out.println("   Welcome to Book My Stay App");
-        System.out.println("   Hotel Booking Management System v2.0");
-        System.out.println("============================================");
-
-        // UC2: Static availability variables (intentional limitation)
-        int singleAvailable = 5;
-        int doubleAvailable = 3;
-        int suiteAvailable = 2;
-
-        // UC2: Polymorphic room references
-        Room[] rooms = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
-        int[] avail = { singleAvailable, doubleAvailable, suiteAvailable };
-
-        System.out.println("\n[UC2] Room Type Catalog:");
-        for (int i = 0; i < rooms.length; i++) {
-            System.out.println();
-            rooms[i].displayRoomDetails();
-            System.out.println("  Available   : " + avail[i] + " rooms");
+        public RoomInventory() {
+            inventory = new HashMap<>();
+            inventory.put("Single Room", 5);
+            inventory.put("Double Room", 3);
+            inventory.put("Suite Room", 2);
         }
 
+        /** O(1) availability lookup. */
+        public int getAvailability(String roomType) {
+            return inventory.getOrDefault(roomType, 0);
+        }
+
+        /** Controlled update — prevents negative counts. */
+        public void updateAvailability(String roomType, int newCount) {
+            if (inventory.containsKey(roomType) && newCount >= 0)
+                inventory.put(roomType, newCount);
+        }
+
+        /** Returns all registered room type keys for iteration. */
+        public Iterable<String> getRoomTypes() {
+            return inventory.keySet();
+        }
+
+        /** Prints the full inventory state. */
+        public void displayInventory() {
+            System.out.println("\n  --- Room Inventory ---");
+            for (Map.Entry<String, Integer> e : inventory.entrySet())
+                System.out.printf("  %-15s : %d available%n", e.getKey(), e.getValue());
+            System.out.println("  ----------------------");
+        }
+    }
+
+    // =========================================================================
+    // Application Entry Point (main)
+    // =========================================================================
+
+    public static void main(String[] args) {
+        System.out.println("============================================");
+        System.out.println("   Welcome to Book My Stay App");
+        System.out.println("   Hotel Booking Management System v3.0");
+        System.out.println("============================================");
+
+        // UC2: Room catalog
+        System.out.println("\n[UC2] Room Type Catalog:");
+        Room[] catalog = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
+        for (Room r : catalog) {
+            System.out.println();
+            r.displayRoomDetails();
+        }
+
+        // UC3: Centralized inventory
+        System.out.println("\n[UC3] Centralized Inventory (HashMap):");
+        RoomInventory inventory = new RoomInventory();
+        inventory.displayInventory();
+
+        System.out.println("\n[UC3] Availability check (O(1) lookup):");
+        System.out.println("  Single Room: " + inventory.getAvailability("Single Room"));
+        System.out.println("  Double Room: " + inventory.getAvailability("Double Room"));
+        System.out.println("  Suite Room : " + inventory.getAvailability("Suite Room"));
+
+        System.out.println("\n[UC3] Controlled update:");
+        inventory.updateAvailability("Single Room", 4);
+        inventory.displayInventory();
+
         System.out.println("\n============================================");
-        System.out.println("  NOTE: Availability stored in variables —");
-        System.out.println("  Centralized HashMap introduced in UC3.");
+        System.out.println("  HashMap ensures O(1) access and single");
+        System.out.println("  source of truth for all availability.");
         System.out.println("============================================");
     }
 }
