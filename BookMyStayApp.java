@@ -10,9 +10,11 @@ import java.util.Map;
  * UC2: Basic Room Types and Static Availability
  * <p>
  * UC3: Centralized Room Inventory Management (HashMap)
+ * <p>
+ * UC4: Room Search and Availability Check (Read-Only)
  *
  * @author Sharveswar
- * @version 3.0
+ * @version 4.0
  */
 public class BookMyStayApp {
 
@@ -21,11 +23,9 @@ public class BookMyStayApp {
     // =========================================================================
 
     static abstract class Room {
-        protected String roomType;
+        protected String roomType, sizeDescription, amenities;
         protected int numberOfBeds;
         protected double pricePerNight;
-        protected String sizeDescription;
-        protected String amenities;
 
         public Room(String roomType, int numberOfBeds, double pricePerNight,
                 String sizeDescription, String amenities) {
@@ -50,6 +50,10 @@ public class BookMyStayApp {
 
         public String getSizeDescription() {
             return sizeDescription;
+        }
+
+        public String getAmenities() {
+            return amenities;
         }
 
         public abstract void displayAmenities();
@@ -100,46 +104,79 @@ public class BookMyStayApp {
     // UC3 — Centralized Room Inventory (HashMap)
     // =========================================================================
 
-    /**
-     * RoomInventory — single source of truth for room availability.
-     *
-     * <p>
-     * Replaces UC2's scattered availability variables with a
-     * centralized {@code HashMap<String, Integer>} providing O(1)
-     * access and controlled, consistent updates.
-     */
     static class RoomInventory {
         private final HashMap<String, Integer> inventory;
 
         public RoomInventory() {
             inventory = new HashMap<>();
             inventory.put("Single Room", 5);
-            inventory.put("Double Room", 3);
+            inventory.put("Double Room", 0); // intentionally zero to test UC4 filter
             inventory.put("Suite Room", 2);
         }
 
-        /** O(1) availability lookup. */
         public int getAvailability(String roomType) {
             return inventory.getOrDefault(roomType, 0);
         }
 
-        /** Controlled update — prevents negative counts. */
-        public void updateAvailability(String roomType, int newCount) {
-            if (inventory.containsKey(roomType) && newCount >= 0)
-                inventory.put(roomType, newCount);
-        }
-
-        /** Returns all registered room type keys for iteration. */
         public Iterable<String> getRoomTypes() {
             return inventory.keySet();
         }
 
-        /** Prints the full inventory state. */
         public void displayInventory() {
             System.out.println("\n  --- Room Inventory ---");
             for (Map.Entry<String, Integer> e : inventory.entrySet())
                 System.out.printf("  %-15s : %d available%n", e.getKey(), e.getValue());
             System.out.println("  ----------------------");
+        }
+    }
+
+    // =========================================================================
+    // UC4 — Search Service (Read-Only Access, No State Mutation)
+    // =========================================================================
+
+    /**
+     * SearchService — provides guest-facing room search.
+     *
+     * <p>
+     * Reads from inventory and room domain objects exclusively.
+     * Never modifies inventory state. Filters out room types with
+     * zero availability before displaying results (defensive programming).
+     */
+    static class SearchService {
+        private final RoomInventory inventory;
+        private final Map<String, Room> roomCatalog;
+
+        public SearchService(RoomInventory inventory) {
+            this.inventory = inventory;
+            this.roomCatalog = new HashMap<>();
+            roomCatalog.put("Single Room", new SingleRoom());
+            roomCatalog.put("Double Room", new DoubleRoom());
+            roomCatalog.put("Suite Room", new SuiteRoom());
+        }
+
+        /**
+         * Read-only search — displays available rooms without changing inventory.
+         */
+        public void searchAvailableRooms() {
+            System.out.println("\n  --- Available Rooms ---");
+            boolean anyFound = false;
+            for (String type : inventory.getRoomTypes()) {
+                int count = inventory.getAvailability(type); // read-only
+                if (count <= 0) {
+                    System.out.println("  [SKIP] " + type + " — not available");
+                    continue;
+                }
+                anyFound = true;
+                Room room = roomCatalog.get(type);
+                if (room != null) {
+                    System.out.println();
+                    room.displayRoomDetails();
+                    System.out.println("  Available   : " + count + " rooms");
+                }
+            }
+            if (!anyFound)
+                System.out.println("  No rooms currently available.");
+            System.out.println("\n  -----------------------");
         }
     }
 
@@ -150,34 +187,26 @@ public class BookMyStayApp {
     public static void main(String[] args) {
         System.out.println("============================================");
         System.out.println("   Welcome to Book My Stay App");
-        System.out.println("   Hotel Booking Management System v3.0");
+        System.out.println("   Hotel Booking Management System v4.0");
         System.out.println("============================================");
 
-        // UC2: Room catalog
-        System.out.println("\n[UC2] Room Type Catalog:");
-        Room[] catalog = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
-        for (Room r : catalog) {
-            System.out.println();
-            r.displayRoomDetails();
-        }
-
         // UC3: Centralized inventory
-        System.out.println("\n[UC3] Centralized Inventory (HashMap):");
         RoomInventory inventory = new RoomInventory();
+        System.out.println("\n[UC3] Initial Inventory:");
         inventory.displayInventory();
 
-        System.out.println("\n[UC3] Availability check (O(1) lookup):");
-        System.out.println("  Single Room: " + inventory.getAvailability("Single Room"));
-        System.out.println("  Double Room: " + inventory.getAvailability("Double Room"));
-        System.out.println("  Suite Room : " + inventory.getAvailability("Suite Room"));
+        // UC4: Read-only room search
+        System.out.println("\n[UC4] Guest Room Search (Read-Only):");
+        SearchService search = new SearchService(inventory);
+        search.searchAvailableRooms();
 
-        System.out.println("\n[UC3] Controlled update:");
-        inventory.updateAvailability("Single Room", 4);
+        // UC4: Verify inventory unchanged after search
+        System.out.println("\n[UC4] Inventory after search (must be unchanged):");
         inventory.displayInventory();
 
         System.out.println("\n============================================");
-        System.out.println("  HashMap ensures O(1) access and single");
-        System.out.println("  source of truth for all availability.");
+        System.out.println("  Search completed. Inventory NOT modified.");
+        System.out.println("  Read-only access prevents state corruption.");
         System.out.println("============================================");
     }
 }
