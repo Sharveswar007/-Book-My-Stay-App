@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.Stack;
 
 /**
  * BookMyStayApp - Hotel Booking Management System.
@@ -20,24 +21,19 @@ import java.util.Set;
  * <p>UC7: Add-On Service Selection (Map + List, Composition)
  * <p>UC8: Booking History & Reporting (List for Chronological Storage)
  * <p>UC9: Error Handling & Validation (Custom Exceptions, Fail-Fast)
+ * <p>UC10: Booking Cancellation & Inventory Rollback (Stack, State Reversal)
  *
  * @author Sharveswar
- * @version 9.0
+ * @version 10.0
  */
 public class BookMyStayApp {
 
     // =========================================================================
-    // UC9 — Error Handling & Validation (Custom Exceptions)
+    // UC9 — Error Handling & Validation
     // =========================================================================
 
-    /**
-     * Custom domain exception for invalid booking requests or system states.
-     * Enforces fail-fast design by halting invalid operations immediately.
-     */
     static class InvalidBookingException extends Exception {
-        public InvalidBookingException(String message) {
-            super(message);
-        }
+        public InvalidBookingException(String message) { super(message); }
     }
 
     // =========================================================================
@@ -82,18 +78,16 @@ public class BookMyStayApp {
     }
 
     // =========================================================================
-    // UC3 — Centralized Room Inventory
+    // UC3 + UC9 + UC10 — Centralized Room Inventory
     // =========================================================================
 
     static class RoomInventory {
         private final HashMap<String, Integer> inventory;
-        private final Set<String> validRoomTypes; // UC9: Pre-validating allowed keys
+        private final Set<String> validRoomTypes;
 
         public RoomInventory() {
             inventory = new HashMap<>();
             validRoomTypes = new HashSet<>();
-            
-            // Register valid room types
             validRoomTypes.add("Single Room");
             validRoomTypes.add("Double Room");
             validRoomTypes.add("Suite Room");
@@ -106,21 +100,21 @@ public class BookMyStayApp {
         public int getAvailability(String t)   { return inventory.getOrDefault(t, 0); }
         public Iterable<String> getRoomTypes() { return inventory.keySet(); }
 
-        /** UC9: Guiding system state. Validates type and count before mutation. */
         public void decrementAvailability(String t) throws InvalidBookingException {
-            if (!validRoomTypes.contains(t)) {
-                throw new InvalidBookingException("Room type '" + t + "' does not exist.");
-            }
+            if (!validRoomTypes.contains(t)) throw new InvalidBookingException("Unknown room type: " + t);
             int cur = inventory.getOrDefault(t, 0);
-            if (cur <= 0) {
-                throw new InvalidBookingException("Inventory exhausted for room type: " + t);
-            }
+            if (cur <= 0) throw new InvalidBookingException("Inventory exhausted for: " + t);
             inventory.put(t, cur - 1);
         }
 
-        public boolean isValidRoomType(String t) {
-            return validRoomTypes.contains(t);
+        /** UC10: Restores availability upon cancellation. */
+        public void incrementAvailability(String t) {
+            if (validRoomTypes.contains(t)) {
+                inventory.put(t, inventory.getOrDefault(t, 0) + 1);
+            }
         }
+
+        public boolean isValidRoomType(String t) { return validRoomTypes.contains(t); }
 
         public void displayInventory() {
             System.out.println("\n  --- Room Inventory ---");
@@ -169,15 +163,9 @@ public class BookMyStayApp {
         private final String guestName, roomType;
         private final int    numberOfNights;
 
-        /** UC9: Input Validation. Enforces correctness before object creation. */
         public Reservation(String guest, String room, int nights) throws InvalidBookingException {
-            if (guest == null || guest.trim().isEmpty()) {
-                throw new InvalidBookingException("Guest name cannot be empty.");
-            }
-            if (nights <= 0) {
-                throw new InvalidBookingException("Number of nights must be at least 1.");
-            }
-            // Room type validity checked during queue processing/allocation
+            if (guest == null || guest.trim().isEmpty()) throw new InvalidBookingException("Guest name cannot be empty.");
+            if (nights <= 0) throw new InvalidBookingException("Number of nights must be at least 1.");
             guestName = guest; roomType = room; numberOfNights = nights;
         }
 
@@ -198,7 +186,6 @@ public class BookMyStayApp {
         public void displayQueue() {
             System.out.println("\n  --- Pending Requests (FIFO) ---");
             int p=1; for (Reservation r : queue) System.out.println("  " + p++ + ". " + r);
-            System.out.println("  Total pending: " + queue.size());
             System.out.println("  --------------------------------");
         }
     }
@@ -236,36 +223,31 @@ public class BookMyStayApp {
             for (AddOnService s : services) total += s.getCost();
             return total;
         }
-
-        public void displayAllAddOns() {
-            System.out.println("\n  --- Add-On Service Summary ---");
-            if (serviceMap.isEmpty()) { System.out.println("  No add-on services selected."); return; }
-            for (Map.Entry<String, List<AddOnService>> e : serviceMap.entrySet()) {
-                String roomId = e.getKey();
-                System.out.println("\n  Room ID: " + roomId);
-                for (AddOnService s : e.getValue()) {
-                    System.out.printf("    - %-20s : $%.2f%n", s.getServiceName(), s.getCost(), s.getDescription());
-                }
-                System.out.printf("    Total Add-On Cost   : $%.2f%n", getTotalAddOnCost(roomId));
-            }
-            System.out.println("\n  ------------------------------");
-        }
     }
 
     // =========================================================================
-    // UC8 — Booking History & Reporting (List)
+    // UC8 + UC10 — Booking History & Reporting
     // =========================================================================
 
     static class ConfirmedBooking {
         private final String roomId;
         private final Reservation reservation;
+        private boolean isCancelled; // UC10: Tracks cancellation status
+
         public ConfirmedBooking(String roomId, Reservation reservation) {
-            this.roomId = roomId; this.reservation = reservation;
+            this.roomId = roomId; this.reservation = reservation; this.isCancelled = false;
         }
+        
         public String getRoomId() { return roomId; }
         public Reservation getReservation() { return reservation; }
+        public boolean isCancelled() { return isCancelled; }
+        
+        /** UC10: Mark booking as cancelled in history. */
+        public void cancel() { this.isCancelled = true; }
+        
         @Override public String toString() {
-            return "ConfirmedBooking[ID=" + roomId + ", Guest=" + reservation.getGuestName()
+            String status = isCancelled ? " [CANCELLED]" : "";
+            return "ConfirmedBooking[ID=" + roomId + status + ", Guest=" + reservation.getGuestName()
                  + ", " + reservation.getRoomType() + " for " + reservation.getNumberOfNights() + " nights]";
         }
     }
@@ -275,6 +257,14 @@ public class BookMyStayApp {
         public BookingHistory() { history = new ArrayList<>(); }
         public void addRecord(ConfirmedBooking booking) { history.add(booking); }
         public List<ConfirmedBooking> getHistory() { return Collections.unmodifiableList(history); }
+        
+        /** UC10: Find a booking by room ID to allow cancellation validation. */
+        public ConfirmedBooking findBookingByRoomId(String roomId) {
+            for (ConfirmedBooking cb : history) {
+                if (cb.getRoomId().equals(roomId)) return cb;
+            }
+            return null;
+        }
     }
 
     static class BookingReportService {
@@ -287,22 +277,24 @@ public class BookMyStayApp {
                 System.out.println("  No bookings recorded yet.\n  ------------------------------");
                 return;
             }
-            int totalNights = 0;
+            int totalActiveNights = 0;
             System.out.println("  Chronological Log:");
             for (int i = 0; i < records.size(); i++) {
                 ConfirmedBooking cb = records.get(i);
                 System.out.println("    " + (i + 1) + ". " + cb);
-                totalNights += cb.getReservation().getNumberOfNights();
+                if (!cb.isCancelled()) {
+                    totalActiveNights += cb.getReservation().getNumberOfNights();
+                }
             }
             System.out.println("\n  --- Summary Statistics ---");
-            System.out.println("  Total Bookings Confirmed : " + records.size());
-            System.out.println("  Total Room-Nights Booked : " + totalNights);
+            System.out.println("  Total Bookings Processed : " + records.size());
+            System.out.println("  Active Room-Nights Booked: " + totalActiveNights);
             System.out.println("  ------------------------------");
         }
     }
 
     // =========================================================================
-    // UC6 + UC8 + UC9 — Room Allocation Service (with Fail-Fast / Graceful Failure)
+    // UC6 + UC10 — Room Allocation Service (Updated for Deallocation)
     // =========================================================================
 
     static class RoomAllocationService {
@@ -334,21 +326,12 @@ public class BookMyStayApp {
                 Reservation r    = q.poll();
                 System.out.println("\n  [Request " + pos++ + "] " + r);
                 
-                // UC9: Fail-Fast Design & Graceful Failure
                 try {
                     String type = r.getRoomType();
-                    
-                    if (!inventory.isValidRoomType(type)) {
-                        throw new InvalidBookingException("Invalid room type requested: " + type);
-                    }
-                    
-                    if (inventory.getAvailability(type) <= 0) {
-                        throw new InvalidBookingException("No availability for " + type);
-                    }
+                    if (!inventory.isValidRoomType(type)) throw new InvalidBookingException("Invalid room type requested: " + type);
+                    if (inventory.getAvailability(type) <= 0) throw new InvalidBookingException("No availability for " + type);
 
-                    // Decrementing inventory. Throws exception if count is invalid.
                     inventory.decrementAvailability(type);
-
                     String roomId = generateUniqueId(type);
                     allAllocatedIds.add(roomId);
                     allocatedByType.computeIfAbsent(type, k -> new HashSet<>()).add(roomId);
@@ -360,18 +343,89 @@ public class BookMyStayApp {
 
                 } catch (InvalidBookingException e) {
                     System.out.println("  [FAILED - VALIDATION ERROR] " + e.getMessage());
-                    // Graceful handling — we log and skip, preventing app crash
                 }
             }
             System.out.println("\n  --------------------------------");
         }
 
-        public void displaySummary() {
-            System.out.println("\n  --- Allocation Summary ---");
-            for (Map.Entry<String,Set<String>> e : allocatedByType.entrySet())
-                System.out.println("  " + e.getKey() + " : " + e.getValue());
-            System.out.println("  Total allocated: " + allAllocatedIds.size());
-            System.out.println("  --------------------------");
+        /** UC10: Frees an allocated room ID back to the allocation structures. */
+        public void deallocateRoom(String roomId, String type) {
+            allAllocatedIds.remove(roomId);
+            Set<String> typeAllocations = allocatedByType.get(type);
+            if (typeAllocations != null) {
+                typeAllocations.remove(roomId);
+            }
+        }
+    }
+
+    // =========================================================================
+    // UC10 — Booking Cancellation Service (Stack / LIFO)
+    // =========================================================================
+
+    /**
+     * CancellationService — reverses system state carefully to ensure consistency.
+     * Uses a Stack (LIFO) to track cancelled reservations, enabling potential undo processes.
+     */
+    static class CancellationService {
+        private final RoomInventory         inventory;
+        private final RoomAllocationService allocationService;
+        private final BookingHistory        history;
+        
+        /** UC10: Tracks recently released room IDs via Last-In-First-Out (LIFO) Stack. */
+        private final Stack<String>         cancelledRoomIds;
+
+        public CancellationService(RoomInventory inventory, RoomAllocationService allocationService, BookingHistory history) {
+            this.inventory         = inventory;
+            this.allocationService = allocationService;
+            this.history           = history;
+            this.cancelledRoomIds  = new Stack<>();
+        }
+
+        public void cancelBooking(String roomId) {
+            System.out.println("\n  [CANCELLATION INITIATED] Reversing booking for Room ID: " + roomId);
+            
+            // 1. Validation of request
+            ConfirmedBooking booking = history.findBookingByRoomId(roomId);
+            if (booking == null) {
+                System.out.println("  [CANCELLATION FAILED] No reservation found with ID: " + roomId);
+                return;
+            }
+            if (booking.isCancelled()) {
+                System.out.println("  [CANCELLATION FAILED] Reservation already cancelled for ID: " + roomId);
+                return;
+            }
+
+            // 2. State Reversal Process
+            String type = booking.getReservation().getRoomType();
+
+            // A. Mark history record as cancelled
+            booking.cancel();
+
+            // B. Deallocate the room ID
+            allocationService.deallocateRoom(roomId, type);
+
+            // C. Push to LIFO Stack (modeling rollback behavior)
+            cancelledRoomIds.push(roomId);
+
+            // D. Restore inventory count
+            inventory.incrementAvailability(type);
+
+            System.out.println("  [CANCELLED-SUCCESS] Room " + roomId + " released back to pool.");
+            System.out.println("                      " + type + " availability restored to: " + inventory.getAvailability(type));
+        }
+
+        public void displayCancelledStack() {
+            System.out.println("\n  --- Cancellation Rollback Stack (LIFO) ---");
+            if (cancelledRoomIds.isEmpty()) {
+                System.out.println("  No cancellations yet.");
+                return;
+            }
+            // Display stack top to bottom
+            System.out.println("  Top of Stack (Most Recent):");
+            for (int i = cancelledRoomIds.size() - 1; i >= 0; i--) {
+                System.out.println("    -> " + cancelledRoomIds.get(i));
+            }
+            System.out.println("  ------------------------------------------");
         }
     }
 
@@ -383,51 +437,49 @@ public class BookMyStayApp {
 
         System.out.println("============================================");
         System.out.println("   Welcome to Book My Stay App");
-        System.out.println("   Hotel Booking Management System v9.0");
+        System.out.println("   Hotel Booking Management System v10.0");
         System.out.println("============================================");
 
         RoomInventory inventory = new RoomInventory();
+        BookingHistory history = new BookingHistory();
+        RoomAllocationService allocService = new RoomAllocationService(inventory, history);
+        CancellationService cancelService = new CancellationService(inventory, allocService, history);
         BookingRequestQueue bookingQueue = new BookingRequestQueue();
 
-        System.out.println("\n[UC9] Generating Requests (Including Invalid Data):");
+        System.out.println("\n[UC9] Generating Operations...");
         
-        // Handling input validation gracefully
         try {
             bookingQueue.addRequest(new Reservation("Alice Johnson",  "Single Room", 3));
             bookingQueue.addRequest(new Reservation("Bob Smith",      "Suite Room",  2));
             bookingQueue.addRequest(new Reservation("Carol Williams", "Double Room", 5));
             bookingQueue.addRequest(new Reservation("David Brown",    "Single Room", 1));
-            
-            // UC9: Testing Fail-Fast Input Validation -> Should throw exception immediately
-            System.out.println("\n  >> Attempting to add invalid reservation (0 nights)...");
-            bookingQueue.addRequest(new Reservation("Eve Hacker", "Single Room", 0));
-        } catch (InvalidBookingException e) {
-            System.out.println("  [CAUGHT EXCEPTION] " + e.getMessage());
-        }
+        } catch (InvalidBookingException e) { System.out.println("  [EXCEPTION] " + e.getMessage()); }
 
-        try {
-            System.out.println("\n  >> Attempting to add invalid room type...");
-            // Valid request object construction, but invalid room type logic will fail in processing
-            bookingQueue.addRequest(new Reservation("Fake Guest", "Presidential Suite", 4));
-            
-            // Re-adding a valid request after exceptions
-            bookingQueue.addRequest(new Reservation("Frank Lee", "Single Room", 2));
-        } catch (InvalidBookingException e) {
-            System.out.println("  [CAUGHT EXCEPTION] " + e.getMessage());
-        }
-        
-        bookingQueue.displayQueue();
-
-        BookingHistory history = new BookingHistory();
-        RoomAllocationService allocService = new RoomAllocationService(inventory, history);
         allocService.processQueue(bookingQueue.getQueue());
 
-        System.out.println("\n[UC8] Generating Operational Booking Report:");
+        // We know Bob Smith got 'STE-101' and Carol got 'DBL-101' etc.
+        // Let's cancel a Single Room and the Suite Room.
+        System.out.println("\n[UC10] Guest initiates cancellation requests...");
+        
+        // Let's assume the first Single Room was assigned SNG-101 and Suite was STE-101
+        cancelService.cancelBooking("SNG-101");
+        cancelService.cancelBooking("STE-101");
+        
+        // Attempting an invalid cancellation
+        cancelService.cancelBooking("FAKE-999");
+
+        // Displaying cancellation stack LIFO
+        cancelService.displayCancelledStack();
+
+        System.out.println("\n[State Check] Inventory after cancellations:");
+        inventory.displayInventory();
+
+        System.out.println("\n[UC8] Generating Operational Booking Report after rollbacks:");
         new BookingReportService(history).generateSummaryReport();
 
         System.out.println("\n============================================");
         System.out.println("  All use cases executed successfully.");
-        System.out.println("  One file. Nine concepts. Real-world design.");
+        System.out.println("  One file. Ten concepts. Real-world design.");
         System.out.println("============================================");
     }
 }
