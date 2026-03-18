@@ -19,11 +19,26 @@ import java.util.Set;
  * <p>UC6: Reservation Confirmation and Room Allocation (Set + HashMap)
  * <p>UC7: Add-On Service Selection (Map + List, Composition)
  * <p>UC8: Booking History & Reporting (List for Chronological Storage)
+ * <p>UC9: Error Handling & Validation (Custom Exceptions, Fail-Fast)
  *
  * @author Sharveswar
- * @version 8.0
+ * @version 9.0
  */
 public class BookMyStayApp {
+
+    // =========================================================================
+    // UC9 — Error Handling & Validation (Custom Exceptions)
+    // =========================================================================
+
+    /**
+     * Custom domain exception for invalid booking requests or system states.
+     * Enforces fail-fast design by halting invalid operations immediately.
+     */
+    static class InvalidBookingException extends Exception {
+        public InvalidBookingException(String message) {
+            super(message);
+        }
+    }
 
     // =========================================================================
     // UC2 — Room Domain Model
@@ -72,9 +87,17 @@ public class BookMyStayApp {
 
     static class RoomInventory {
         private final HashMap<String, Integer> inventory;
+        private final Set<String> validRoomTypes; // UC9: Pre-validating allowed keys
 
         public RoomInventory() {
             inventory = new HashMap<>();
+            validRoomTypes = new HashSet<>();
+            
+            // Register valid room types
+            validRoomTypes.add("Single Room");
+            validRoomTypes.add("Double Room");
+            validRoomTypes.add("Suite Room");
+            
             inventory.put("Single Room", 3);
             inventory.put("Double Room", 2);
             inventory.put("Suite Room",  1);
@@ -83,9 +106,20 @@ public class BookMyStayApp {
         public int getAvailability(String t)   { return inventory.getOrDefault(t, 0); }
         public Iterable<String> getRoomTypes() { return inventory.keySet(); }
 
-        public void decrementAvailability(String t) {
+        /** UC9: Guiding system state. Validates type and count before mutation. */
+        public void decrementAvailability(String t) throws InvalidBookingException {
+            if (!validRoomTypes.contains(t)) {
+                throw new InvalidBookingException("Room type '" + t + "' does not exist.");
+            }
             int cur = inventory.getOrDefault(t, 0);
-            if (cur > 0) inventory.put(t, cur - 1);
+            if (cur <= 0) {
+                throw new InvalidBookingException("Inventory exhausted for room type: " + t);
+            }
+            inventory.put(t, cur - 1);
+        }
+
+        public boolean isValidRoomType(String t) {
+            return validRoomTypes.contains(t);
         }
 
         public void displayInventory() {
@@ -135,8 +169,16 @@ public class BookMyStayApp {
         private final String guestName, roomType;
         private final int    numberOfNights;
 
-        public Reservation(String guest, String room, int nights) {
-            guestName=guest; roomType=room; numberOfNights=nights;
+        /** UC9: Input Validation. Enforces correctness before object creation. */
+        public Reservation(String guest, String room, int nights) throws InvalidBookingException {
+            if (guest == null || guest.trim().isEmpty()) {
+                throw new InvalidBookingException("Guest name cannot be empty.");
+            }
+            if (nights <= 0) {
+                throw new InvalidBookingException("Number of nights must be at least 1.");
+            }
+            // Room type validity checked during queue processing/allocation
+            guestName = guest; roomType = room; numberOfNights = nights;
         }
 
         public String getGuestName()      { return guestName; }
@@ -214,69 +256,37 @@ public class BookMyStayApp {
     // UC8 — Booking History & Reporting (List)
     // =========================================================================
 
-    /**
-     * ConfirmedBooking — immutable record linking a generated roomId to
-     * the original Reservation details.
-     */
     static class ConfirmedBooking {
         private final String roomId;
         private final Reservation reservation;
-
         public ConfirmedBooking(String roomId, Reservation reservation) {
-            this.roomId = roomId;
-            this.reservation = reservation;
+            this.roomId = roomId; this.reservation = reservation;
         }
-
         public String getRoomId() { return roomId; }
         public Reservation getReservation() { return reservation; }
-
-        @Override
-        public String toString() {
+        @Override public String toString() {
             return "ConfirmedBooking[ID=" + roomId + ", Guest=" + reservation.getGuestName()
                  + ", " + reservation.getRoomType() + " for " + reservation.getNumberOfNights() + " nights]";
         }
     }
 
-    /**
-     * BookingHistory — maintains chronological record of accepted bookings.
-     * <p>Uses {@code List<ConfirmedBooking>} to preserve insertion order.
-     */
     static class BookingHistory {
         private final List<ConfirmedBooking> history;
-
-        public BookingHistory() {
-            history = new ArrayList<>();
-        }
-
-        public void addRecord(ConfirmedBooking booking) {
-            history.add(booking);
-        }
-
-        /** Returns an unmodifiable view for reporting to prevent accidental mutation. */
-        public List<ConfirmedBooking> getHistory() {
-            return Collections.unmodifiableList(history);
-        }
+        public BookingHistory() { history = new ArrayList<>(); }
+        public void addRecord(ConfirmedBooking booking) { history.add(booking); }
+        public List<ConfirmedBooking> getHistory() { return Collections.unmodifiableList(history); }
     }
 
-    /**
-     * BookingReportService — generates operational summaries from history data.
-     */
     static class BookingReportService {
         private final BookingHistory bookingHistory;
-
-        public BookingReportService(BookingHistory bookingHistory) {
-            this.bookingHistory = bookingHistory;
-        }
-
+        public BookingReportService(BookingHistory bookingHistory) { this.bookingHistory = bookingHistory; }
         public void generateSummaryReport() {
             System.out.println("\n  --- Booking History Report ---");
             List<ConfirmedBooking> records = bookingHistory.getHistory();
             if (records.isEmpty()) {
-                System.out.println("  No bookings recorded yet.");
-                System.out.println("  ------------------------------");
+                System.out.println("  No bookings recorded yet.\n  ------------------------------");
                 return;
             }
-
             int totalNights = 0;
             System.out.println("  Chronological Log:");
             for (int i = 0; i < records.size(); i++) {
@@ -284,7 +294,6 @@ public class BookMyStayApp {
                 System.out.println("    " + (i + 1) + ". " + cb);
                 totalNights += cb.getReservation().getNumberOfNights();
             }
-
             System.out.println("\n  --- Summary Statistics ---");
             System.out.println("  Total Bookings Confirmed : " + records.size());
             System.out.println("  Total Room-Nights Booked : " + totalNights);
@@ -293,7 +302,7 @@ public class BookMyStayApp {
     }
 
     // =========================================================================
-    // UC6 — Room Allocation Service (Updated for UC8 History)
+    // UC6 + UC8 + UC9 — Room Allocation Service (with Fail-Fast / Graceful Failure)
     // =========================================================================
 
     static class RoomAllocationService {
@@ -303,10 +312,6 @@ public class BookMyStayApp {
         private final HashMap<String,Set<String>>  allocatedByType;
         private int idCounter = 100;
 
-        /**
-         * @param inv     the centralized inventory
-         * @param history the chronological booking history (UC8)
-         */
         public RoomAllocationService(RoomInventory inv, BookingHistory history) {
             inventory       = inv;
             bookingHistory  = history;
@@ -327,24 +332,36 @@ public class BookMyStayApp {
             int pos = 1;
             while (!q.isEmpty()) {
                 Reservation r    = q.poll();
-                String      type = r.getRoomType();
                 System.out.println("\n  [Request " + pos++ + "] " + r);
+                
+                // UC9: Fail-Fast Design & Graceful Failure
+                try {
+                    String type = r.getRoomType();
+                    
+                    if (!inventory.isValidRoomType(type)) {
+                        throw new InvalidBookingException("Invalid room type requested: " + type);
+                    }
+                    
+                    if (inventory.getAvailability(type) <= 0) {
+                        throw new InvalidBookingException("No availability for " + type);
+                    }
 
-                if (inventory.getAvailability(type) <= 0) {
-                    System.out.println("  [REJECTED] No availability for " + type);
-                    continue;
+                    // Decrementing inventory. Throws exception if count is invalid.
+                    inventory.decrementAvailability(type);
+
+                    String roomId = generateUniqueId(type);
+                    allAllocatedIds.add(roomId);
+                    allocatedByType.computeIfAbsent(type, k -> new HashSet<>()).add(roomId);
+
+                    bookingHistory.addRecord(new ConfirmedBooking(roomId, r));
+
+                    System.out.println("  [CONFIRMED] Room ID: " + roomId + " -> " + r.getGuestName()
+                        + " | Remaining " + type + ": " + inventory.getAvailability(type));
+
+                } catch (InvalidBookingException e) {
+                    System.out.println("  [FAILED - VALIDATION ERROR] " + e.getMessage());
+                    // Graceful handling — we log and skip, preventing app crash
                 }
-
-                String roomId = generateUniqueId(type);
-                allAllocatedIds.add(roomId);
-                allocatedByType.computeIfAbsent(type, k -> new HashSet<>()).add(roomId);
-                inventory.decrementAvailability(type);
-
-                // UC8: Added to chronological booking history
-                bookingHistory.addRecord(new ConfirmedBooking(roomId, r));
-
-                System.out.println("  [CONFIRMED] Room ID: " + roomId + " -> " + r.getGuestName()
-                    + " | Remaining " + type + ": " + inventory.getAvailability(type));
             }
             System.out.println("\n  --------------------------------");
         }
@@ -366,38 +383,51 @@ public class BookMyStayApp {
 
         System.out.println("============================================");
         System.out.println("   Welcome to Book My Stay App");
-        System.out.println("   Hotel Booking Management System v8.0");
+        System.out.println("   Hotel Booking Management System v9.0");
         System.out.println("============================================");
 
-        Room[] rooms = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
         RoomInventory inventory = new RoomInventory();
-        new SearchService(inventory).searchAvailableRooms();
-
         BookingRequestQueue bookingQueue = new BookingRequestQueue();
-        bookingQueue.addRequest(new Reservation("Alice Johnson",  "Single Room", 3));
-        bookingQueue.addRequest(new Reservation("Bob Smith",      "Suite Room",  2));
-        bookingQueue.addRequest(new Reservation("Carol Williams", "Double Room", 5));
-        bookingQueue.addRequest(new Reservation("David Brown",    "Single Room", 1));
-        bookingQueue.addRequest(new Reservation("Eva Martinez",   "Suite Room",  4));
-        bookingQueue.addRequest(new Reservation("Frank Lee",      "Single Room", 2));
+
+        System.out.println("\n[UC9] Generating Requests (Including Invalid Data):");
         
-        // UC8: History instance passed into AllocationService
+        // Handling input validation gracefully
+        try {
+            bookingQueue.addRequest(new Reservation("Alice Johnson",  "Single Room", 3));
+            bookingQueue.addRequest(new Reservation("Bob Smith",      "Suite Room",  2));
+            bookingQueue.addRequest(new Reservation("Carol Williams", "Double Room", 5));
+            bookingQueue.addRequest(new Reservation("David Brown",    "Single Room", 1));
+            
+            // UC9: Testing Fail-Fast Input Validation -> Should throw exception immediately
+            System.out.println("\n  >> Attempting to add invalid reservation (0 nights)...");
+            bookingQueue.addRequest(new Reservation("Eve Hacker", "Single Room", 0));
+        } catch (InvalidBookingException e) {
+            System.out.println("  [CAUGHT EXCEPTION] " + e.getMessage());
+        }
+
+        try {
+            System.out.println("\n  >> Attempting to add invalid room type...");
+            // Valid request object construction, but invalid room type logic will fail in processing
+            bookingQueue.addRequest(new Reservation("Fake Guest", "Presidential Suite", 4));
+            
+            // Re-adding a valid request after exceptions
+            bookingQueue.addRequest(new Reservation("Frank Lee", "Single Room", 2));
+        } catch (InvalidBookingException e) {
+            System.out.println("  [CAUGHT EXCEPTION] " + e.getMessage());
+        }
+        
+        bookingQueue.displayQueue();
+
         BookingHistory history = new BookingHistory();
         RoomAllocationService allocService = new RoomAllocationService(inventory, history);
         allocService.processQueue(bookingQueue.getQueue());
 
-        AddOnServiceManager addOnManager = new AddOnServiceManager();
-        addOnManager.addService("SNG-101", new AddOnService("Breakfast", "Daily buffet breakfast", 25.0));
-        addOnManager.addService("STE-102", new AddOnService("Spa Access", "Full-day spa", 60.0));
-
-        // UC8: Display Operational Booking Report
         System.out.println("\n[UC8] Generating Operational Booking Report:");
-        BookingReportService reportService = new BookingReportService(history);
-        reportService.generateSummaryReport();
+        new BookingReportService(history).generateSummaryReport();
 
         System.out.println("\n============================================");
         System.out.println("  All use cases executed successfully.");
-        System.out.println("  One file. Eight concepts. Real-world design.");
+        System.out.println("  One file. Nine concepts. Real-world design.");
         System.out.println("============================================");
     }
 }
